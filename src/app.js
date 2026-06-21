@@ -2,25 +2,30 @@ const canvas = document.querySelector("#gameCanvas");
 const ctx = canvas.getContext("2d");
 
 const elements = {
+  introScreen: document.querySelector("#introScreen"),
+  playScreen: document.querySelector("#playScreen"),
+  summaryScreen: document.querySelector("#summaryScreen"),
   modeSelect: document.querySelector("#modeSelect"),
   modeBadge: document.querySelector("#modeBadge"),
   roundInstruction: document.querySelector("#roundInstruction"),
   scoreValue: document.querySelector("#scoreValue"),
+  finalScoreValue: document.querySelector("#finalScoreValue"),
+  activeHandValue: document.querySelector("#activeHandValue"),
+  timerValue: document.querySelector("#timerValue"),
+  trackingValue: document.querySelector("#trackingValue"),
   startButton: document.querySelector("#startButton"),
+  endButton: document.querySelector("#endButton"),
   resetButton: document.querySelector("#resetButton"),
   demoButton: document.querySelector("#demoButton"),
+  pointerDemoButton: document.querySelector("#pointerDemoButton"),
   cameraButton: document.querySelector("#cameraButton"),
   cameraStatus: document.querySelector("#cameraStatus"),
   cameraPreview: document.querySelector("#cameraPreview"),
-  leftHandButton: document.querySelector("#leftHandButton"),
-  rightHandButton: document.querySelector("#rightHandButton"),
   emptyState: document.querySelector("#emptyState"),
-  diagnosisCard: document.querySelector("#diagnosisCard"),
   diagnosisTitle: document.querySelector("#diagnosisTitle"),
   diagnosisText: document.querySelector("#diagnosisText"),
   preferenceValue: document.querySelector("#preferenceValue"),
   learnedValue: document.querySelector("#learnedValue"),
-  eventLog: document.querySelector("#eventLog"),
   leftUsage: document.querySelector("#leftUsage"),
   rightUsage: document.querySelector("#rightUsage"),
   leftSpeed: document.querySelector("#leftSpeed"),
@@ -36,23 +41,31 @@ const elements = {
 };
 
 const HANDS = ["left", "right"];
-const COLORS = ["#ef476f", "#f9b437", "#0f8a5f", "#118ab2", "#8d5a97"];
+const COLORS = ["#e2b714", "#8fcf69", "#ca4754", "#7aa2f7"];
 const TARGET_LABEL = { left: "L", right: "R", either: "" };
 const MODE_LABEL = {
-  free: "Free Choice",
-  forced: "Forced Hand",
-  adaptive: "Adaptive Training",
+  free: "free choice",
+  forced: "forced hand",
+  adaptive: "adaptive training",
 };
 const HAND_CONNECTIONS = [
-  [0, 1], [1, 2], [2, 3], [3, 4],
-  [0, 5], [5, 6], [6, 7], [7, 8],
-  [5, 9], [9, 10], [10, 11], [11, 12],
-  [9, 13], [13, 14], [14, 15], [15, 16],
-  [13, 17], [17, 18], [18, 19], [19, 20],
+  [0, 5],
+  [5, 8],
+  [0, 9],
+  [9, 12],
+  [0, 13],
+  [13, 16],
   [0, 17],
+  [17, 20],
+  [5, 9],
+  [9, 13],
+  [13, 17],
 ];
+const SESSION_SECONDS = 60;
+const CAMERA_INFERENCE_MS = 50;
 
 const state = {
+  phase: "intro",
   running: false,
   score: 0,
   activeHand: "left",
@@ -62,8 +75,9 @@ const state = {
   pointer: null,
   pointerTrail: [],
   lastSpawnAt: 0,
-  spawnEveryMs: 920,
+  spawnEveryMs: 960,
   lastTime: performance.now(),
+  sessionStartedAt: 0,
   forcedNextHand: "left",
   handOverrideUntil: 0,
   camera: {
@@ -71,7 +85,8 @@ const state = {
     hands: null,
     cameraRunner: null,
     trackedHands: [],
-    lastStatus: "Camera off",
+    lastStatus: "camera off",
+    lastSendAt: 0,
   },
   metrics: createMetrics(),
 };
@@ -106,31 +121,57 @@ function resizeCanvas() {
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
 }
 
-function setActiveHand(hand) {
+function showPhase(phase) {
+  state.phase = phase;
+  elements.introScreen.classList.toggle("hidden", phase !== "intro");
+  elements.playScreen.classList.toggle("hidden", phase !== "play");
+  elements.summaryScreen.classList.toggle("hidden", phase !== "summary");
+  resizeCanvas();
+}
+
+function setActiveHand(hand, manual = true) {
   state.activeHand = hand;
-  state.handOverrideUntil = performance.now() + 1800;
-  elements.leftHandButton.classList.toggle("active", hand === "left");
-  elements.rightHandButton.classList.toggle("active", hand === "right");
+  if (manual) state.handOverrideUntil = performance.now() + 1800;
+  elements.activeHandValue.textContent = hand;
 }
 
 function setTrackedActiveHand(hand) {
   if (performance.now() < state.handOverrideUntil) return;
-  state.activeHand = hand;
-  elements.leftHandButton.classList.toggle("active", hand === "left");
-  elements.rightHandButton.classList.toggle("active", hand === "right");
+  setActiveHand(hand, false);
 }
 
-function startSession() {
+function startSession({ pointerOnly = false } = {}) {
+  state.mode = elements.modeSelect.value;
   state.running = true;
+  state.score = 0;
   state.fruits = [];
   state.particles = [];
-  state.score = 0;
+  state.pointerTrail = [];
   state.lastSpawnAt = 0;
-  elements.emptyState.classList.add("hidden");
-  elements.startButton.textContent = "Restart session";
-  logEvent(`Started ${MODE_LABEL[state.mode]} mode.`);
+  state.sessionStartedAt = performance.now();
+  state.metrics = createMetrics();
+  elements.emptyState.classList.remove("hidden");
+  elements.emptyState.querySelector("strong").textContent = pointerOnly ? "pointer demo" : "camera ready";
+  elements.emptyState.querySelector("span").textContent = pointerOnly
+    ? "move your pointer through fruit to slice"
+    : "move your index finger through fruit to slice";
+  elements.scoreValue.textContent = "0";
+  elements.timerValue.textContent = String(SESSION_SECONDS);
   updateInstruction();
-  updateAnalytics();
+  showPhase("play");
+}
+
+async function startCameraSession() {
+  const ok = await enableCamera();
+  if (ok) startSession();
+}
+
+function endSession() {
+  state.running = false;
+  state.fruits = [];
+  state.particles = [];
+  renderSummary();
+  showPhase("summary");
 }
 
 function resetMetrics() {
@@ -139,19 +180,12 @@ function resetMetrics() {
   state.particles = [];
   state.pointerTrail = [];
   state.metrics = createMetrics();
-  updateAnalytics();
-  logEvent("Metrics reset.");
+  renderSummary();
 }
 
 function loadDemoPattern() {
   state.running = false;
-  state.fruits = [];
-  state.particles = [];
   state.score = 180;
-  elements.emptyState.classList.remove("hidden");
-  elements.emptyState.querySelector("strong").textContent = "Demo pattern loaded";
-  elements.emptyState.querySelector("span").textContent = "Left has capability but low voluntary usage.";
-
   const metrics = createMetrics();
   metrics.freeOpportunities = 20;
   metrics.left.freeChoices = 4;
@@ -176,40 +210,40 @@ function loadDemoPattern() {
   metrics.right.range = [74, 78, 80, 76, 81, 79, 77, 80, 82];
 
   state.metrics = metrics;
-  updateAnalytics();
-  logEvent("Loaded demo: possible left learned non-use pattern.");
+  renderSummary();
 }
 
 async function enableCamera() {
+  if (state.camera.enabled) return true;
   if (!navigator.mediaDevices?.getUserMedia) {
-    logEvent("Camera API is not available in this browser.");
-    setCameraStatus("Camera unavailable", "warn");
-    return;
+    setCameraStatus("camera unavailable", "warn");
+    return false;
   }
-
   if (!window.Hands || !window.Camera) {
-    logEvent("MediaPipe unavailable. Check internet/CDN access; pointer and touch still work.");
-    setCameraStatus("MediaPipe unavailable", "warn");
-    return;
+    setCameraStatus("mediapipe unavailable", "warn");
+    return false;
   }
 
   try {
-    setCameraStatus("Starting camera...", "active");
+    setCameraStatus("starting camera", "active");
     const hands = new window.Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
     });
     hands.setOptions({
       maxNumHands: 2,
-      modelComplexity: 1,
+      modelComplexity: 0,
       minDetectionConfidence: 0.65,
       minTrackingConfidence: 0.65,
     });
     hands.onResults(handleHandResults);
 
     const cameraRunner = new window.Camera(elements.cameraPreview, {
-      width: 960,
-      height: 540,
+      width: 640,
+      height: 480,
       onFrame: async () => {
+        const now = performance.now();
+        if (now - state.camera.lastSendAt < CAMERA_INFERENCE_MS) return;
+        state.camera.lastSendAt = now;
         await hands.send({ image: elements.cameraPreview });
       },
     });
@@ -219,13 +253,12 @@ async function enableCamera() {
     state.camera.hands = hands;
     state.camera.cameraRunner = cameraRunner;
     elements.cameraPreview.classList.add("active");
-    elements.cameraButton.textContent = "Camera enabled";
-    elements.cameraButton.disabled = true;
-    setCameraStatus("Camera ready", "active");
-    logEvent("Camera ready. MediaPipe hand tracking started.");
+    setCameraStatus("camera ready", "active");
+    return true;
   } catch (error) {
-    logEvent(`Camera or MediaPipe failed: ${error.message}`);
-    setCameraStatus("Camera failed", "warn");
+    setCameraStatus("camera failed", "warn");
+    console.warn("Camera or MediaPipe failed:", error);
+    return false;
   }
 }
 
@@ -236,19 +269,17 @@ function handleHandResults(results) {
     const label = handedness[index]?.label || "Unknown";
     const hand = normalizeHandedness(label);
     const point = landmarkToCanvasPoint(handLandmarks[8]);
-    const wrist = landmarkToCanvasPoint(handLandmarks[0]);
     return {
       hand,
-      label,
-      landmarks: handLandmarks.map(landmarkToCanvasPoint),
       point,
-      wrist,
+      landmarks: handLandmarks.map(landmarkToCanvasPoint),
       motion: distanceToLastPoint(hand, point),
     };
   });
 
   if (!state.camera.trackedHands.length) {
-    setCameraStatus("No hand detected", "warn");
+    setCameraStatus("no hand detected", "warn");
+    elements.trackingValue.textContent = "no hand detected";
     return;
   }
 
@@ -259,9 +290,10 @@ function handleHandResults(results) {
   }
 
   const status = state.camera.trackedHands.length > 1
-    ? "Tracking both hands"
-    : `Tracking ${state.camera.trackedHands[0].hand}`;
+    ? "tracking both hands"
+    : `tracking ${state.camera.trackedHands[0].hand}`;
   setCameraStatus(status, "active");
+  elements.trackingValue.textContent = status;
 }
 
 function normalizeHandedness(label) {
@@ -299,17 +331,17 @@ function chooseActiveTrackedHand(trackedHands) {
 }
 
 function updatePointerFromCamera(point) {
-  const cameraPoint = { ...point, time: performance.now() };
-  state.pointer = cameraPoint;
-  state.pointerTrail.push(cameraPoint);
-  if (state.pointerTrail.length > 40) state.pointerTrail.shift();
+  updatePointerPoint({ ...point, time: performance.now() });
+}
+
+function updatePointerPoint(point) {
+  state.pointer = point;
+  state.pointerTrail.push(point);
+  if (state.pointerTrail.length > 32) state.pointerTrail.shift();
 }
 
 function setCameraStatus(message, tone = "neutral") {
-  if (state.camera.lastStatus !== message) {
-    state.camera.lastStatus = message;
-    if (message.startsWith("Tracking")) logEvent(`${message} from camera.`);
-  }
+  state.camera.lastStatus = message;
   elements.cameraStatus.textContent = message;
   elements.cameraStatus.classList.toggle("active", tone === "active");
   elements.cameraStatus.classList.toggle("warn", tone === "warn");
@@ -317,42 +349,31 @@ function setCameraStatus(message, tone = "neutral") {
 
 function spawnFruit(now) {
   const rect = canvas.getBoundingClientRect();
-  const mode = state.mode;
   let targetHand = "either";
 
-  if (mode === "forced") {
+  if (state.mode === "forced") {
     targetHand = state.forcedNextHand;
     state.forcedNextHand = state.forcedNextHand === "left" ? "right" : "left";
+  } else if (state.mode === "adaptive") {
+    targetHand = chooseTrainingHand(summarizeMetrics());
   }
 
-  if (mode === "adaptive") {
-    const summary = summarizeMetrics();
-    targetHand = chooseTrainingHand(summary);
-  }
+  if (targetHand === "either") state.metrics.freeOpportunities += 1;
+  else state.metrics[targetHand].forcedOpportunities += 1;
 
-  if (targetHand === "either") {
-    state.metrics.freeOpportunities += 1;
-  } else {
-    state.metrics[targetHand].forcedOpportunities += 1;
-  }
-
-  const weakerBias = targetHand === "left" ? 0.36 : targetHand === "right" ? 0.64 : 0.5;
-  const x = clamp(rect.width * (weakerBias + randomBetween(-0.17, 0.17)), 58, rect.width - 58);
-  const fruit = {
+  const bias = targetHand === "left" ? 0.34 : targetHand === "right" ? 0.66 : 0.5;
+  state.fruits.push({
     id: crypto.randomUUID(),
-    x,
+    x: clamp(rect.width * (bias + randomBetween(-0.16, 0.16)), 58, rect.width - 58),
     y: rect.height + 42,
-    vx: randomBetween(-55, 55),
-    vy: randomBetween(-640, -510),
-    radius: mode === "adaptive" ? randomBetween(34, 46) : randomBetween(28, 40),
+    vx: randomBetween(-48, 48),
+    vy: randomBetween(-860, -700),
+    radius: state.mode === "adaptive" ? randomBetween(36, 48) : randomBetween(30, 42),
     color: COLORS[Math.floor(Math.random() * COLORS.length)],
     targetHand,
     spawnedAt: now,
     sliced: false,
-    peak: randomBetween(rect.height * 0.12, rect.height * 0.38),
-  };
-  state.fruits.push(fruit);
-  updateInstruction();
+  });
 }
 
 function chooseTrainingHand(summary) {
@@ -363,46 +384,41 @@ function chooseTrainingHand(summary) {
 }
 
 function updateInstruction() {
-  if (state.mode === "free") {
-    elements.roundInstruction.textContent = "Slice fruit with either hand. We track voluntary hand choice.";
-  } else if (state.mode === "forced") {
-    elements.roundInstruction.textContent = "Slice only fruit marked L or R with that hand.";
-  } else {
-    elements.roundInstruction.textContent = "Targets bias toward the side that needs more training support.";
-  }
   elements.modeBadge.textContent = MODE_LABEL[state.mode];
+  if (state.mode === "free") {
+    elements.roundInstruction.textContent = "slice with either hand";
+  } else if (state.mode === "forced") {
+    elements.roundInstruction.textContent = "slice only L/R targets with that hand";
+  } else {
+    elements.roundInstruction.textContent = "adaptive targets support the side that needs work";
+  }
 }
 
 function updateFruit(fruit, dt) {
-  const gravity = 980;
-  fruit.vy += gravity * dt;
+  fruit.vy += 860 * dt;
   fruit.x += fruit.vx * dt;
   fruit.y += fruit.vy * dt;
 }
 
 function handleMisses() {
   const rect = canvas.getBoundingClientRect();
-  const remaining = [];
-
-  for (const fruit of state.fruits) {
+  state.fruits = state.fruits.filter((fruit) => {
     const missed = fruit.y - fruit.radius > rect.height + 20;
     if (missed && !fruit.sliced && fruit.targetHand !== "either") {
       state.metrics[fruit.targetHand].misses += 1;
-      logEvent(`${capitalize(fruit.targetHand)} forced target missed.`);
     }
-    if (!missed && !fruit.sliced) remaining.push(fruit);
-  }
-
-  state.fruits = remaining;
+    return !missed && !fruit.sliced;
+  });
 }
 
 function sliceFruit(fruit, point, now) {
   fruit.sliced = true;
   state.score += fruit.targetHand === "either" || fruit.targetHand === state.activeHand ? 10 : 2;
+  elements.scoreValue.textContent = String(state.score);
+  elements.emptyState.classList.add("hidden");
 
   const hand = state.activeHand;
   const handMetrics = state.metrics[hand];
-  const reactionMs = now - fruit.spawnedAt;
   const movement = calculateMovementQuality(point);
   const validForcedHit = fruit.targetHand === "either" || fruit.targetHand === hand;
 
@@ -413,11 +429,10 @@ function sliceFruit(fruit, point, now) {
   } else {
     state.metrics[fruit.targetHand].misses += 1;
     handMetrics.misses += 1;
-    logEvent(`Wrong hand used: ${capitalize(hand)} on ${capitalize(fruit.targetHand)} target.`);
   }
 
   if (validForcedHit) {
-    handMetrics.reactionTimes.push(reactionMs);
+    handMetrics.reactionTimes.push(now - fruit.spawnedAt);
     handMetrics.velocities.push(movement.velocity);
     handMetrics.directness.push(movement.directness);
     handMetrics.smoothness.push(movement.smoothness);
@@ -425,19 +440,11 @@ function sliceFruit(fruit, point, now) {
   }
 
   addParticles(fruit);
-  logEvent(
-    `${capitalize(hand)} sliced ${fruit.targetHand === "either" ? "free" : fruit.targetHand} target in ${Math.round(
-      reactionMs,
-    )} ms.`,
-  );
-  updateAnalytics();
 }
 
 function calculateMovementQuality(point) {
-  const trail = state.pointerTrail.slice(-12);
-  if (trail.length < 3) {
-    return { velocity: 0, directness: 70, smoothness: 70, range: 40 };
-  }
+  const trail = state.pointerTrail.slice(-10);
+  if (trail.length < 3) return { velocity: 0, directness: 70, smoothness: 70, range: 40 };
 
   let path = 0;
   let acceleration = 0;
@@ -452,7 +459,6 @@ function calculateMovementQuality(point) {
     path += distance;
     velocitySum += velocity;
     velocityCount += 1;
-
     if (i > 1) {
       const before = trail[i - 2];
       const previousVelocity = Math.hypot(prev.x - before.x, prev.y - before.y) / Math.max(0.016, (prev.time - before.time) / 1000);
@@ -461,26 +467,25 @@ function calculateMovementQuality(point) {
   }
 
   const start = trail[0];
-  const end = point;
-  const straight = Math.hypot(end.x - start.x, end.y - start.y);
-  const directness = clamp((straight / Math.max(1, path)) * 100, 0, 100);
-  const smoothness = clamp(100 - acceleration / Math.max(1, trail.length - 2) / 24, 0, 100);
-  const range = clamp((path / Math.max(canvas.getBoundingClientRect().width, 1)) * 220, 0, 100);
-  const velocity = velocitySum / Math.max(1, velocityCount);
-
-  return { velocity, directness, smoothness, range };
+  const straight = Math.hypot(point.x - start.x, point.y - start.y);
+  return {
+    velocity: velocitySum / Math.max(1, velocityCount),
+    directness: clamp((straight / Math.max(1, path)) * 100, 0, 100),
+    smoothness: clamp(100 - acceleration / Math.max(1, trail.length - 2) / 24, 0, 100),
+    range: clamp((path / Math.max(canvas.getBoundingClientRect().width, 1)) * 220, 0, 100),
+  };
 }
 
 function addParticles(fruit) {
-  for (let i = 0; i < 16; i += 1) {
+  for (let i = 0; i < 12; i += 1) {
     state.particles.push({
       x: fruit.x,
       y: fruit.y,
-      vx: randomBetween(-220, 220),
-      vy: randomBetween(-260, 120),
-      life: randomBetween(0.35, 0.65),
+      vx: randomBetween(-190, 190),
+      vy: randomBetween(-220, 110),
+      life: randomBetween(0.32, 0.58),
       color: fruit.color,
-      radius: randomBetween(3, 8),
+      radius: randomBetween(3, 7),
     });
   }
 }
@@ -497,13 +502,10 @@ function updateParticles(dt) {
 
 function detectSlices(now) {
   if (!state.pointer) return;
-  const point = state.pointer;
-
   for (const fruit of state.fruits) {
     if (fruit.sliced) continue;
-    const distance = Math.hypot(point.x - fruit.x, point.y - fruit.y);
-    if (distance <= fruit.radius + 10) {
-      sliceFruit(fruit, point, now);
+    if (Math.hypot(state.pointer.x - fruit.x, state.pointer.y - fruit.y) <= fruit.radius + 10) {
+      sliceFruit(fruit, state.pointer, now);
     }
   }
 }
@@ -511,24 +513,34 @@ function detectSlices(now) {
 function draw() {
   const rect = canvas.getBoundingClientRect();
   ctx.clearRect(0, 0, rect.width, rect.height);
+  if (state.phase !== "play") return;
 
-  drawGuide(rect);
+  drawVignette(rect);
   drawTrackedHands();
   for (const fruit of state.fruits) drawFruit(fruit);
   for (const particle of state.particles) drawParticle(particle);
   drawTrail();
 }
 
+function drawVignette(rect) {
+  ctx.save();
+  const gradient = ctx.createRadialGradient(rect.width / 2, rect.height / 2, rect.width * 0.1, rect.width / 2, rect.height / 2, rect.width * 0.72);
+  gradient.addColorStop(0, "rgba(17,17,17,0)");
+  gradient.addColorStop(1, "rgba(17,17,17,0.55)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  ctx.restore();
+}
+
 function drawTrackedHands() {
   if (!state.camera.trackedHands.length) return;
-
   ctx.save();
   for (const tracked of state.camera.trackedHands) {
-    const color = tracked.hand === "left" ? "#0f8a5f" : "#b84f18";
+    const color = tracked.hand === "left" ? "#8fcf69" : "#e2b714";
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
-    ctx.lineWidth = 3;
-
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.78;
     for (const [startIndex, endIndex] of HAND_CONNECTIONS) {
       const start = tracked.landmarks[startIndex];
       const end = tracked.landmarks[endIndex];
@@ -538,40 +550,11 @@ function drawTrackedHands() {
       ctx.lineTo(end.x, end.y);
       ctx.stroke();
     }
-
-    for (const landmark of tracked.landmarks) {
-      ctx.beginPath();
-      ctx.arc(landmark.x, landmark.y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    ctx.fillStyle = "#ffffff";
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 4;
+    ctx.globalAlpha = 1;
     ctx.beginPath();
-    ctx.arc(tracked.point.x, tracked.point.y, 11, 0, Math.PI * 2);
+    ctx.arc(tracked.point.x, tracked.point.y, 10, 0, Math.PI * 2);
     ctx.fill();
-    ctx.stroke();
   }
-  ctx.restore();
-}
-
-function drawGuide(rect) {
-  ctx.save();
-  ctx.strokeStyle = "rgba(23, 32, 25, 0.08)";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([8, 10]);
-  ctx.beginPath();
-  ctx.moveTo(rect.width / 2, 0);
-  ctx.lineTo(rect.width / 2, rect.height);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  ctx.fillStyle = "rgba(23, 32, 25, 0.42)";
-  ctx.font = "700 13px Inter, sans-serif";
-  ctx.fillText("LEFT SPACE", 18, 28);
-  ctx.textAlign = "right";
-  ctx.fillText("RIGHT SPACE", rect.width - 18, 28);
   ctx.restore();
 }
 
@@ -580,39 +563,31 @@ function drawFruit(fruit) {
   ctx.translate(fruit.x, fruit.y);
   ctx.fillStyle = fruit.color;
   ctx.beginPath();
-  ctx.ellipse(0, 0, fruit.radius * 0.92, fruit.radius, -0.35, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, fruit.radius * 0.9, fruit.radius, -0.35, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+  ctx.fillStyle = "rgba(255,255,255,0.28)";
   ctx.beginPath();
-  ctx.ellipse(-fruit.radius * 0.28, -fruit.radius * 0.3, fruit.radius * 0.22, fruit.radius * 0.14, -0.7, 0, Math.PI * 2);
+  ctx.ellipse(-fruit.radius * 0.25, -fruit.radius * 0.3, fruit.radius * 0.2, fruit.radius * 0.13, -0.7, 0, Math.PI * 2);
   ctx.fill();
-
-  ctx.strokeStyle = "#5d3b1f";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(2, -fruit.radius + 4);
-  ctx.quadraticCurveTo(8, -fruit.radius - 12, 18, -fruit.radius - 10);
-  ctx.stroke();
 
   if (fruit.targetHand !== "either") {
-    ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+    ctx.fillStyle = "#111";
     ctx.beginPath();
-    ctx.arc(0, 0, fruit.radius * 0.48, 0, Math.PI * 2);
+    ctx.arc(0, 0, fruit.radius * 0.46, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = fruit.targetHand === "left" ? "#076846" : "#b84f18";
-    ctx.font = `800 ${Math.max(16, fruit.radius * 0.7)}px Inter, sans-serif`;
+    ctx.fillStyle = fruit.color;
+    ctx.font = `900 ${Math.max(16, fruit.radius * 0.7)}px Inter, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(TARGET_LABEL[fruit.targetHand], 0, 1);
   }
-
   ctx.restore();
 }
 
 function drawParticle(particle) {
   ctx.save();
-  ctx.globalAlpha = clamp(particle.life / 0.6, 0, 1);
+  ctx.globalAlpha = clamp(particle.life / 0.58, 0, 1);
   ctx.fillStyle = particle.color;
   ctx.beginPath();
   ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
@@ -621,16 +596,15 @@ function drawParticle(particle) {
 }
 
 function drawTrail() {
-  const trail = state.pointerTrail.slice(-14);
+  const trail = state.pointerTrail.slice(-12);
   if (trail.length < 2) return;
-
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   for (let i = 1; i < trail.length; i += 1) {
     const alpha = i / trail.length;
-    ctx.strokeStyle = state.activeHand === "left" ? `rgba(15, 138, 95, ${alpha})` : `rgba(184, 79, 24, ${alpha})`;
-    ctx.lineWidth = 3 + alpha * 7;
+    ctx.strokeStyle = state.activeHand === "left" ? `rgba(143,207,105,${alpha})` : `rgba(226,183,20,${alpha})`;
+    ctx.lineWidth = 3 + alpha * 6;
     ctx.beginPath();
     ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
     ctx.lineTo(trail[i].x, trail[i].y);
@@ -644,12 +618,14 @@ function loop(now) {
   state.lastTime = now;
 
   if (state.running) {
-    const adaptiveModifier = state.mode === "adaptive" ? 1.18 : 1;
-    if (now - state.lastSpawnAt > state.spawnEveryMs * adaptiveModifier) {
+    const remaining = Math.max(0, SESSION_SECONDS - Math.floor((now - state.sessionStartedAt) / 1000));
+    elements.timerValue.textContent = String(remaining);
+    if (remaining <= 0) endSession();
+
+    if (now - state.lastSpawnAt > state.spawnEveryMs * (state.mode === "adaptive" ? 1.15 : 1)) {
       spawnFruit(now);
       state.lastSpawnAt = now;
     }
-
     for (const fruit of state.fruits) updateFruit(fruit, dt);
     updateParticles(dt);
     detectSlices(now);
@@ -657,21 +633,19 @@ function loop(now) {
   }
 
   draw();
-  elements.scoreValue.textContent = String(state.score);
   requestAnimationFrame(loop);
 }
 
 function summarizeMetrics() {
-  const left = summarizeHand("left");
-  const right = summarizeHand("right");
-  return { left, right };
+  return {
+    left: summarizeHand("left"),
+    right: summarizeHand("right"),
+  };
 }
 
 function summarizeHand(hand) {
   const metrics = state.metrics[hand];
-  const usage = state.metrics.freeOpportunities
-    ? (metrics.freeChoices / state.metrics.freeOpportunities) * 100
-    : 0;
+  const usage = state.metrics.freeOpportunities ? (metrics.freeChoices / state.metrics.freeOpportunities) * 100 : 0;
   const avgReaction = average(metrics.reactionTimes);
   const speedFromReaction = avgReaction ? clamp(100 - ((avgReaction - 450) / 1550) * 100, 0, 100) : 0;
   const speedFromVelocity = clamp((average(metrics.velocities) / 950) * 100, 0, 100);
@@ -682,20 +656,10 @@ function summarizeHand(hand) {
     ? average(metrics.directness) * 0.42 + average(metrics.smoothness) * 0.38 + average(metrics.range) * 0.2
     : 0;
   const physical = speed * 0.35 + accuracy * 0.35 + quality * 0.3;
-  const gap = physical - usage;
-  return {
-    usage,
-    speed,
-    accuracy,
-    quality,
-    physical,
-    gap,
-    hits: metrics.hits,
-    misses: metrics.misses,
-  };
+  return { usage, speed, accuracy, quality, physical, gap: physical - usage };
 }
 
-function updateAnalytics() {
+function renderSummary() {
   const summary = summarizeMetrics();
   setMetricText("leftUsage", summary.left.usage);
   setMetricText("rightUsage", summary.right.usage);
@@ -709,22 +673,21 @@ function updateAnalytics() {
   setMetricText("rightPhysical", summary.right.physical);
   setMetricText("leftGap", summary.left.gap);
   setMetricText("rightGap", summary.right.gap);
+  elements.finalScoreValue.textContent = String(state.score);
 
   const preference = inferPreference(summary);
   const learned = inferLearnedNonUse(summary);
   elements.preferenceValue.textContent = preference;
   elements.learnedValue.textContent = learned.label;
-  elements.diagnosisCard.classList.toggle("warn", learned.hand !== null);
-  elements.diagnosisCard.classList.toggle("ok", learned.hand === null && state.metrics.freeOpportunities > 0);
   elements.diagnosisTitle.textContent = learned.title;
   elements.diagnosisText.textContent = learned.text;
 }
 
 function inferPreference(summary) {
   const diff = summary.left.usage - summary.right.usage;
-  if (state.metrics.freeOpportunities < 3) return "Need data";
-  if (Math.abs(diff) < 12) return "Balanced";
-  return diff > 0 ? "Left hand" : "Right hand";
+  if (state.metrics.freeOpportunities < 3) return "need data";
+  if (Math.abs(diff) < 12) return "balanced";
+  return diff > 0 ? "left hand" : "right hand";
 }
 
 function inferLearnedNonUse(summary) {
@@ -732,32 +695,24 @@ function inferLearnedNonUse(summary) {
     (item) => item.physical >= 55 && item.usage <= 42 && item.gap >= 22,
   );
   candidates.sort((a, b) => b.gap - a.gap);
-
   if (candidates.length) {
     const candidate = candidates[0];
     return {
-      hand: candidate.hand,
-      label: capitalize(candidate.hand),
-      title: `Possible learned non-use tendency: ${capitalize(candidate.hand)}`,
-      text: `${capitalize(candidate.hand)} shows usable physical capability (${round(
-        candidate.physical,
-      )}) but low voluntary use (${round(candidate.usage)}). This is a screening signal, not a diagnosis.`,
+      label: candidate.hand,
+      title: `possible learned non-use: ${candidate.hand}`,
+      text: `${candidate.hand} shows usable physical capability (${round(candidate.physical)}) but low voluntary use (${round(candidate.usage)}).`,
     };
   }
-
   if (state.metrics.freeOpportunities < 3) {
     return {
-      hand: null,
-      label: "Need data",
-      title: "No session yet",
-      text: "Run Free Choice and Forced Hand rounds to estimate hand preference and capability.",
+      label: "need data",
+      title: "not enough session data",
+      text: "Run a free-choice and forced-hand session to estimate preference and capability.",
     };
   }
-
   return {
-    hand: null,
-    label: "Not indicated",
-    title: "No strong learned non-use signal",
+    label: "not indicated",
+    title: "no strong learned non-use signal",
     text: "Current usage and capability scores do not show a high capability plus low usage pattern.",
   };
 }
@@ -766,25 +721,13 @@ function setMetricText(id, value) {
   elements[id].textContent = String(round(value));
 }
 
-function logEvent(message) {
-  const item = document.createElement("li");
-  item.textContent = message;
-  elements.eventLog.prepend(item);
-  while (elements.eventLog.children.length > 12) {
-    elements.eventLog.lastElementChild.remove();
-  }
-}
-
 function updatePointer(event) {
   const rect = canvas.getBoundingClientRect();
-  const point = {
+  updatePointerPoint({
     x: clamp(event.clientX - rect.left, 0, rect.width),
     y: clamp(event.clientY - rect.top, 0, rect.height),
     time: performance.now(),
-  };
-  state.pointer = point;
-  state.pointerTrail.push(point);
-  if (state.pointerTrail.length > 40) state.pointerTrail.shift();
+  });
 }
 
 function average(values) {
@@ -804,36 +747,30 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function capitalize(value) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-elements.leftHandButton.addEventListener("click", () => setActiveHand("left"));
-elements.rightHandButton.addEventListener("click", () => setActiveHand("right"));
-elements.startButton.addEventListener("click", startSession);
+elements.cameraButton.addEventListener("click", startCameraSession);
+elements.pointerDemoButton.addEventListener("click", () => startSession({ pointerOnly: true }));
+elements.startButton.addEventListener("click", () => startSession({ pointerOnly: !state.camera.enabled }));
+elements.endButton.addEventListener("click", endSession);
 elements.resetButton.addEventListener("click", resetMetrics);
 elements.demoButton.addEventListener("click", loadDemoPattern);
-elements.cameraButton.addEventListener("click", enableCamera);
-elements.modeSelect.addEventListener("change", (event) => {
-  state.mode = event.target.value;
+elements.modeSelect.addEventListener("change", () => {
+  state.mode = elements.modeSelect.value;
   updateInstruction();
-  logEvent(`Switched to ${MODE_LABEL[state.mode]} mode.`);
 });
 
 window.addEventListener("keydown", (event) => {
   if (event.key.toLowerCase() === "l") setActiveHand("left");
   if (event.key.toLowerCase() === "r") setActiveHand("right");
 });
-
 canvas.addEventListener("pointermove", updatePointer);
 canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture(event.pointerId);
   updatePointer(event);
 });
-
 window.addEventListener("resize", resizeCanvas);
 
 resizeCanvas();
+setActiveHand("left", false);
 updateInstruction();
-updateAnalytics();
+renderSummary();
 requestAnimationFrame(loop);

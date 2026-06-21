@@ -1,43 +1,49 @@
 # Fruit Rehab Ninja Prototype
 
-Playable web prototype for the Digital Aiding 4 Aging Hackathon 2026 idea.
+Fullscreen camera prototype for the Digital Aiding 4 Aging Hackathon 2026.
 
-The app turns a Fruit Ninja style interaction into a light screening workflow:
+The app now uses a minimal Monkeytype-style flow:
 
-- Free Choice mode estimates which hand is voluntarily preferred.
-- Forced Hand mode compares left and right physical capability.
-- Adaptive Training mode biases targets toward the side that appears to need more support.
-- The analytics panel calculates Speed, Accuracy, Movement Quality, Physical Capability, Usage Preference, and Learned Non-Use Gap.
+1. Open the app.
+2. Click `start camera`.
+3. Allow camera permission.
+4. Slice fruit with left or right index finger in fullscreen.
+5. Review hand preference, capability, and possible learned non-use in the end summary.
 
-This is a prototype and should be described as a preliminary assessment aid, not a medical diagnosis tool.
+This prototype is a preliminary screening aid only. It is not a medical diagnosis tool.
 
 ## Run locally
 
-Serve the folder. Camera and ES modules should be run from `localhost`, not by opening the file directly:
+Serve the folder from localhost:
 
 ```powershell
 python -m http.server 5173
 ```
 
-Then visit `http://localhost:5173`.
+Then visit:
+
+```text
+http://localhost:5173
+```
+
+Do not open `index.html` directly when testing camera. Browser camera APIs and ES modules work best from `localhost`.
 
 ## Controls
 
-- Start session: begins spawning fruit.
-- Mode: switches between Free Choice, Forced Hand, and Adaptive Training.
-- Active hand: choose Left or Right with buttons or keyboard keys `L` and `R`.
-- Pointer or touch: slice fruit.
-- Load demo pattern: instantly populates a sample case where the left side has capability but low voluntary usage.
-- Enable camera: starts MediaPipe Hands from CDN, shows a mirrored camera preview, and uses the index fingertip as the slice cursor.
+- `start camera`: starts MediaPipe Hands from CDN and opens fullscreen play mode.
+- `pointer demo`: starts fullscreen play mode without camera, useful when CDN/camera is unavailable.
+- `L` / `R`: temporary manual override for active hand.
+- `end`: ends the current session and opens the summary.
+- `play again`: starts another 60-second session.
+- `load demo pattern`: populates a sample left learned non-use scenario in the summary.
 
 ## Camera tracking
 
-- The preview is mirrored so the user's left hand feels like left on screen.
-- MediaPipe handedness is normalized for mirror view before updating the active hand.
-- If one hand is visible, that hand becomes the active slicer.
-- If two hands are visible, the app chooses the hand nearest to the current fruit, or the hand with the most recent movement when no fruit is active.
-- Manual Left/Right buttons and keyboard keys still temporarily override tracking when handedness needs correction.
-- If MediaPipe CDN or camera permission fails, pointer and touch controls still work.
+- MediaPipe is loaded from CDN, so internet access is required.
+- Camera input is mirrored to feel natural to the user.
+- MediaPipe handedness is normalized for mirror view.
+- The index fingertip controls the slice cursor.
+- The app uses `modelComplexity: 0`, 640x480 camera input, and throttled inference to reduce lag.
 
 ## Metrics
 
@@ -58,5 +64,3 @@ Learned Non-Use Gap:
 ```text
 Physical Capability Score - Usage Preference Score
 ```
-
-If one side has high capability but low voluntary usage, the app reports a possible learned non-use tendency instead of a diagnosis.
