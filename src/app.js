@@ -87,6 +87,7 @@ const state = {
     trackedHands: [],
     lastStatus: "camera off",
     lastSendAt: 0,
+    lastTrackedAt: 0,
   },
   metrics: createMetrics(),
 };
@@ -283,6 +284,7 @@ function handleHandResults(results) {
     return;
   }
 
+  state.camera.lastTrackedAt = performance.now();
   const active = chooseActiveTrackedHand(state.camera.trackedHands);
   if (active) {
     setTrackedActiveHand(active.hand);
@@ -537,22 +539,20 @@ function drawTrackedHands() {
   ctx.save();
   for (const tracked of state.camera.trackedHands) {
     const color = tracked.hand === "left" ? "#8fcf69" : "#e2b714";
+    ctx.shadowBlur = 18;
+    ctx.shadowColor = color;
+    ctx.fillStyle = "rgba(17, 17, 17, 0.72)";
     ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = 2;
-    ctx.globalAlpha = 0.78;
-    for (const [startIndex, endIndex] of HAND_CONNECTIONS) {
-      const start = tracked.landmarks[startIndex];
-      const end = tracked.landmarks[endIndex];
-      if (!start || !end) continue;
-      ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.lineTo(end.x, end.y);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.arc(tracked.point.x, tracked.point.y, 10, 0, Math.PI * 2);
+    ctx.arc(tracked.point.x, tracked.point.y, 18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(tracked.point.x, tracked.point.y, 5, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
@@ -722,12 +722,17 @@ function setMetricText(id, value) {
 }
 
 function updatePointer(event) {
+  if (shouldIgnoreMouseInput()) return;
   const rect = canvas.getBoundingClientRect();
   updatePointerPoint({
     x: clamp(event.clientX - rect.left, 0, rect.width),
     y: clamp(event.clientY - rect.top, 0, rect.height),
     time: performance.now(),
   });
+}
+
+function shouldIgnoreMouseInput() {
+  return state.camera.enabled && performance.now() - state.camera.lastTrackedAt < 900;
 }
 
 function average(values) {
