@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fruit Rehab Ninja Prototype</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="control-panel" aria-label="Session controls">
+        <div>
+          <p class="eyebrow">Digital Aiding 4 Aging</p>
+          <h1>Fruit Rehab Ninja</h1>
+          <p class="summary">
+            A playable rehab game prototype that compares left and right arm
+            use, capability, and possible learned non-use patterns.
+          </p>
+        </div>
+
+        <div class="field">
+          <label for="modeSelect">Mode</label>
+          <select id="modeSelect">
+            <option value="free">Free Choice: infer preferred hand</option>
+            <option value="forced">Forced Hand: compare capability</option>
+            <option value="adaptive">Adaptive Training: support weaker side</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <span>Active hand</span>
+          <div class="segmented" role="group" aria-label="Active hand">
+            <button id="leftHandButton" class="segment active" type="button">Left</button>
+            <button id="rightHandButton" class="segment" type="button">Right</button>
+          </div>
+          <p class="hint">Keyboard: L / R. Pointer and touch are supported for demo.</p>
+        </div>
+
+        <div class="actions">
+          <button id="startButton" class="primary" type="button">Start session</button>
+          <button id="resetButton" type="button">Reset metrics</button>
+          <button id="demoButton" type="button">Load demo pattern</button>
+        </div>
+
+        <div class="camera-box">
+          <div>
+            <strong>Video input</strong>
+            <p>
+              Camera preview can be enabled for pitch demos. The scoring layer
+              is ready for hand landmarks from MediaPipe or another tracker.
+            </p>
+          </div>
+          <button id="cameraButton" type="button">Enable camera</button>
+          <span id="cameraStatus" class="camera-status">Camera off</span>
+          <video id="cameraPreview" playsinline muted></video>
+        </div>
+
+        <div class="formula-card">
+          <strong>Learned Non-Use Gap</strong>
+          <code>Physical Capability - Usage Preference</code>
+          <p>
+            A high capability score with low voluntary use is reported only as
+            a possible learned non-use tendency.
+          </p>
+        </div>
+      </section>
+
+      <section class="stage-panel" aria-label="Fruit Rehab Ninja game">
+        <header class="stage-header">
+          <div>
+            <span id="modeBadge">Free Choice</span>
+            <h2 id="roundInstruction">Slice fruit with either hand.</h2>
+          </div>
+          <div class="score-block">
+            <span>Score</span>
+            <strong id="scoreValue">0</strong>
+          </div>
+        </header>
+        <div class="canvas-wrap">
+          <canvas id="gameCanvas" width="960" height="640" aria-label="Game canvas"></canvas>
+          <div id="emptyState" class="empty-state">
+            <strong>Ready to play</strong>
+            <span>Start a session, move the pointer, and slice the fruit.</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="analytics-panel" aria-label="Movement analytics">
+        <div class="diagnosis-card" id="diagnosisCard">
+          <p class="eyebrow">Prototype result</p>
+          <h2 id="diagnosisTitle">No session yet</h2>
+          <p id="diagnosisText">
+            Run Free Choice and Forced Hand rounds to estimate hand preference
+            and capability.
+          </p>
+        </div>
+
+        <div class="metric-grid">
+          <article>
+            <span>Estimated preference</span>
+            <strong id="preferenceValue">-</strong>
+          </article>
+          <article>
+            <span>Likely learned non-use</span>
+            <strong id="learnedValue">-</strong>
+          </article>
+        </div>
+
+        <div class="hand-table" role="table" aria-label="Left and right metrics">
+          <div class="table-row table-head" role="row">
+            <span role="columnheader">Metric</span>
+            <span role="columnheader">Left</span>
+            <span role="columnheader">Right</span>
+          </div>
+          <div class="table-row" role="row">
+            <span>Usage preference</span>
+            <strong id="leftUsage">0</strong>
+            <strong id="rightUsage">0</strong>
+          </div>
+          <div class="table-row" role="row">
+            <span>Speed score</span>
+            <strong id="leftSpeed">0</strong>
+            <strong id="rightSpeed">0</strong>
+          </div>
+          <div class="table-row" role="row">
+            <span>Accuracy score</span>
+            <strong id="leftAccuracy">0</strong>
+            <strong id="rightAccuracy">0</strong>
+          </div>
+          <div class="table-row" role="row">
+            <span>Movement quality</span>
+            <strong id="leftQuality">0</strong>
+            <strong id="rightQuality">0</strong>
+          </div>
+          <div class="table-row highlight" role="row">
+            <span>Physical capability</span>
+            <strong id="leftPhysical">0</strong>
+            <strong id="rightPhysical">0</strong>
+          </div>
+          <div class="table-row highlight" role="row">
+            <span>Learned non-use gap</span>
+            <strong id="leftGap">0</strong>
+            <strong id="rightGap">0</strong>
+          </div>
+        </div>
+
+        <div class="log-panel">
+          <strong>Event log</strong>
+          <ol id="eventLog"></ol>
+        </div>
+      </aside>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="./src/app.js" type="module"></script>
+  </body>
+</html>
